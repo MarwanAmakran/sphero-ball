@@ -200,16 +200,16 @@ class SpheroController:
 
 
                     if (self.joystick.get_button(buttons['1']) == 1):
-                        self.speed = 50
+                        self.speed = 80
                         self.color=Color(r=255, g=200, b=0)
                         self.display_number(api)
                     if (self.joystick.get_button(buttons['2']) == 1):
-                        self.speed =70
+                        self.speed =100
                         self.color = Color(r=255, g=100, b=0)
                         self.display_number(api)
 
                     if (self.joystick.get_button(buttons['3']) == 1):
-                        self.speed = 100
+                        self.speed = 150
                         self.color = Color(r=255, g=50, b=0)
                         self.display_number(api)
 
@@ -220,7 +220,7 @@ class SpheroController:
 
                     # Toegevoegd: R2 voor maximale snelheid en kleur
                     if (self.joystick.get_button(buttons['R2']) == 1):
-                        self.speed = 80  # kleine boost voor Sphero
+                        self.speed = 90  # kleine boost voor Sphero
                         self.color = Color(r=0, g=255, b=255)  # Optioneel: verander kleur bij max snelheid
                         self.display_number(api)
 
@@ -246,6 +246,11 @@ class SpheroController:
                             if time.time() - move_start_time >= 1:  
                                 api.set_speed(0)
                                 move_start_time = None
+
+                    # Achteruit rijden met snelheid 40 als pijltje naar beneden
+                    elif Y > 0.7:
+                        self.move(api, (self.base_heading + 180) % 360, 40)
+
                     else:
                         api.set_speed(0)
                         move_start_time = None
