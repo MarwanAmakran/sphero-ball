@@ -161,6 +161,8 @@ class SpheroController:
                 self.enter_calibration_mode(api, 0)
                 self.exit_calibration_mode(api)
 
+                move_start_time = None  # Voeg toe boven je while-loop
+
                 while self.is_running:
                     pygame.event.pump()
                     if not self.gameOn:
@@ -191,6 +193,7 @@ class SpheroController:
                     
                     X = self.joystick.get_axis(0)
                     Y = self.joystick.get_axis(1)
+
                     #for i in range(self.joystick.get_numbuttons()):
                     #    button = self.joystick.get_button(i)
                     #    print(f"Button {i}: {button}")
@@ -217,7 +220,7 @@ class SpheroController:
 
                     # Toegevoegd: R2 voor maximale snelheid en kleur
                     if (self.joystick.get_button(buttons['R2']) == 1):
-                        self.speed = 255  # Maximale snelheid voor Sphero
+                        self.speed = 80  # kleine boost voor Sphero
                         self.color = Color(r=0, g=255, b=255)  # Optioneel: verander kleur bij max snelheid
                         self.display_number(api)
 
@@ -232,16 +235,20 @@ class SpheroController:
                         self.move(api, self.base_heading, 0)
                         time.sleep(0.3)  # Even wachten zodat hij de draai maakt
 
+                    # Automatisch stoppen na 20 cm vooruit
                     if Y < -0.7:
-                        self.move(api, self.base_heading, self.speed)
-                    elif Y > 0.7:
-                            self.move(api, self.base_heading + 180, self.speed)
-                    elif X > 0.7:
-                            self.move(api, self.base_heading + 22, 0)
-                    elif X < -0.7:
-                            self.move(api, self.base_heading - 22, 0)
+                        if move_start_time is None:
+                            move_start_time = time.time()
+                            self.move(api, self.base_heading, self.speed)
+                        else:
+                            self.move(api, self.base_heading, self.speed)
+                            # Stel: 20 cm bij 20 cm/s = 1 sec, pas aan op jouw snelheid!
+                            if time.time() - move_start_time >= 1:  
+                                api.set_speed(0)
+                                move_start_time = None
                     else:
                         api.set_speed(0)
+                        move_start_time = None
    
                     self.base_heading = api.get_heading()
 
