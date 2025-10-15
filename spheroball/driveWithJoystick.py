@@ -18,11 +18,13 @@ SB-81E0 4
 SB-7740 5
 """
 
+# ======= TUNEERBARE CONSTANTEN =======
 TILE_CM = 50.0           # 1 tegel = 50 cm
 RUN_SPEED = 150          # 0..255. 150 is stevig maar nog controleerbaar
 SPEED_CM_PER_S = 70.0    # gemeten cm/s bij RUN_SPEED op jullie vloer
 SAFETY = 0.96            # iets < 1.0 om overshoot te beperken
 HEADING_SETTLE = 0.12    # korte pauze na heading switch
+# =====================================
 
 buttons = {
     '1': 0,
