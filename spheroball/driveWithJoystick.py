@@ -11,24 +11,17 @@ from spherov2.commands.power import Power
 import math
 
 # ======= TUNEERBARE CONSTANTEN =======
-TILE_CM = 50.0           # 1 tegel = 50 cm (referentie)
-RUN_SPEED = 150          # 0..255. 150 is stevig maar controleerbaar
-SPEED_CM_PER_S = 70.0    # >>> meet dit op jullie vloer bij RUN_SPEED
-SAFETY = 0.96            # iets < 1.0 om overshoot te beperken
-HEADING_SETTLE = 0.20    # iets langer zodat hij zeker draait
+RUN_SPEED = 70           # TRAGE snelheid (0..255)
+SPEED_CM_PER_S = 35.0    # schatting cm/s bij RUN_SPEED op jullie vloer
+SAFETY = 0.95            # iets korter rijden om overshoot te beperken
+HEADING_SETTLE = 0.25    # iets langer wachten na het draaien
+SCALE = 0.5              # *** ALLE AFSTANDEN GEDEELD DOOR 2 ***
 # =====================================
 
 buttons = {
-    '1': 0,
-    '2': 1,
-    '3': 2,
-    '4': 3,
-    'L1': 4,
-    'L2': 6,
-    'R1': 5,
-    'R2': 7,
-    'SELECT': 8,
-    'START': 9
+    '1': 0, '2': 1, '3': 2, '4': 3,
+    'L1': 4, 'R1': 5, 'L2': 6, 'R2': 7,
+    'SELECT': 8, 'START': 9
 }
 
 class SpheroController:
@@ -59,27 +52,23 @@ class SpheroController:
         return (cm / max(1e-6, SPEED_CM_PER_S)) * SAFETY
 
     def roll_forward_rel(self, api, rel_heading_deg: int, meters: float, speed: int = RUN_SPEED):
-        """Rijd rechtuit over 'meters' volgens RELatieve heading tov base_heading (R1/L1)."""
         abs_heading = int((self.base_heading + rel_heading_deg) % 360)
         api.set_heading(abs_heading)
         time.sleep(HEADING_SETTLE)
-        duration = self.meters_to_seconds(meters)
+        duration = self.meters_to_seconds(meters * SCALE)  # afstand gehalveerd
         api.roll(speed, abs_heading, duration)
         api.set_speed(0)
-        time.sleep(0.10)  # kort stabiliseren
+        time.sleep(0.12)
 
     def build_segments(self):
         """
-        JOUW TRAJECT (wijzerszin), RELATIEF tov base_heading:
-        2,8 m vooruit → rechts 2,5 → rechts 1,0 → links 2,3 → links 1,3 → rechts 2,5 → rechts 3,0 → stop
-        Rechts = -90°, Links = +90° (relatief).
+        JOUW TRAJECT (wijzerszin) — afstanden worden nog eens vermenigvuldigd met SCALE=0.5:
+        2.8 m → rechts 2.5 → rechts 1.0 → links 2.3 → links 1.3 → rechts 2.5 → rechts 3.0 → stop
         """
         seg = []
         heading = 0  # start vooruit
 
-        # helper om segment toe te voegen en heading te wijzigen
-        def fwd(distance_m):
-            seg.append(("→", heading, distance_m))
+        def fwd(m): seg.append(("→", heading, m))
         def right():
             nonlocal heading
             heading = (heading - 90) % 360
@@ -87,53 +76,27 @@ class SpheroController:
             nonlocal heading
             heading = (heading + 90) % 360
 
-        # 1) 2,8 m vooruit
         fwd(2.8)
-        # 2) rechts + 2,5 m
         right(); fwd(2.5)
-        # 3) rechts + 1,0 m
         right(); fwd(1.0)
-        # 4) links + 2,3 m
         left();  fwd(2.3)
-        # 5) links + 1,3 m
         left();  fwd(1.3)
-        # 6) rechts + 2,5 m
         right(); fwd(2.5)
-        # 7) rechts + 3,0 m
         right(); fwd(3.0)
-        # 8) klaar
         return seg
 
     def run_autonomous_lap(self, api):
-        """Rijdt 1 volledige ronde volgens build_segments()."""
-        print("\n--- AUTONOME RONDE START ---")
-        # fixeer startheading zodat joystick-updates geen invloed hebben
+        print("\n--- AUTONOME RONDE (TRAAG & 1/2 AFSTAND) ---")
         start_base = self.base_heading
-        segments = self.build_segments()
         t0 = time.time()
-        for lbl, rel_h, meters in segments:
+        for _, rel_h, meters in self.build_segments():
             abs_h = (start_base + rel_h) % 360
-            print(f"{lbl}  heading_abs={abs_h:3.0f}°, afstand={meters:.2f} m")
-            api.set_front_led(Color(0, 255, 255))
+            print(f"heading={abs_h:3.0f}°, afstand={meters*SCALE:.2f} m (geschaald)")
             self.roll_forward_rel(api, rel_h, meters, RUN_SPEED)
         api.set_speed(0)
-        api.set_front_led(Color(0, 120, 255))
-        lap = time.time() - t0
-        print(f"FINISH — rondetijd: {lap:.2f} s\n")
+        print(f"FINISH — tijd: {time.time() - t0:.2f} s\n")
 
     # ---------- ORIGINELE FUNCTIES ----------
-    def discover_nearest_toy(self):
-        try:
-            toys = scanner.find_toys()
-            if not toys:
-                print("Geen Sphero's gevonden.")
-                return
-            self.toy = toys[0]
-            print(f"Dichtstbijzijnde Sphero toy '{self.toy.name}' ontdekt.")
-            return self.toy.name
-        except Exception as e:
-            print(f"Error no toys nearby: {e}")
-
     def discover_toy(self, toy_name):
         try:
             self.toy = scanner.find_toy(toy_name=toy_name)
@@ -155,28 +118,16 @@ class SpheroController:
         api.set_heading(heading)
         api.set_speed(speed)
 
-    def toggle_calibration_mode(self, api, Y):
-        if not self.calibration_mode:
-            self.enter_calibration_mode(api, Y)
-        else:
-            self.exit_calibration_mode(api)
-
     def enter_calibration_mode(self, api, X):
         api.set_speed(0)
         self.gameStartTime = time.time()
         self.calibration_mode = True
         self.gameOn = False
         api.set_front_led(Color(255, 0, 0))
-
         self.base_heading = api.get_heading()
-
-        if X < -0.7:
-            new_heading = self.base_heading - 5
-        elif X > 0.7:
-            new_heading = self.base_heading + 5
-        else:
-            new_heading = self.base_heading
-
+        if   X < -0.7: new_heading = self.base_heading - 5
+        elif X >  0.7: new_heading = self.base_heading + 5
+        else:          new_heading = self.base_heading
         api.set_heading(new_heading)
 
     def exit_calibration_mode(self, api):
@@ -187,143 +138,86 @@ class SpheroController:
         self.gameStartTime = time.time()
         api.set_front_led(Color(0, 255, 0))
 
-    LED_PATTERNS = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5'}
-
-    def set_number(self, number):
-        self.number = int(number)
-
+    LED_PATTERNS = {1:'1',2:'2',3:'3',4:'4',5:'5'}
+    def set_number(self, number): self.number = int(number)
     def display_number(self, api):
-        number_char = self.LED_PATTERNS.get(self.number)
-        if number_char:
-            api.set_matrix_character(number_char, self.color)
-        else:
-            print(f"Error in matrix '{self.number}'")
+        ch = self.LED_PATTERNS.get(self.number)
+        if ch: api.set_matrix_character(ch, self.color)
 
     def print_battery_level(self, api):
-        battery_voltage = Power.get_battery_voltage(self.toy)
-        print(f"Battery status of {self.number}: {battery_voltage:.2f} V ")
-        if (battery_voltage > 4.1):
-            api.set_front_led(Color(r=0, g=255, b=0))
-        if 3.9 < battery_voltage <= 4.1:
-            api.set_front_led(Color(r=255, g=255, b=0))
-        if 3.7 < battery_voltage <= 3.9:
-            api.set_front_led(Color(r=255, g=100, b=0))
-        if battery_voltage <= 3.7:
-            api.set_front_led(Color(r=255, g=0, b=0))
-        if battery_voltage < 3.5:
-            sys.exit("Battery low — stop.")
+        v = Power.get_battery_voltage(self.toy)
+        print(f"Battery: {v:.2f} V")
+        if v > 4.1: api.set_front_led(Color(0,255,0))
+        elif v > 3.9: api.set_front_led(Color(255,255,0))
+        elif v > 3.7: api.set_front_led(Color(255,100,0))
+        else: api.set_front_led(Color(255,0,0))
+        if v < 3.5: sys.exit("Battery low — stop.")
 
     def control_toy(self):
         try:
             with self.connect_toy() as api:
-                last_battery_print_time = time.time()
+                last_battery_print = time.time()
                 self.set_number(self.number)
                 self.display_number(api)
                 self.enter_calibration_mode(api, 0)
                 self.exit_calibration_mode(api)
 
                 move_start_time = None
-                hillCounter = 0
 
                 while self.is_running:
                     pygame.event.pump()
-                    if not self.gameOn:
-                        self.gameStartTime = time.time()
-                    current_time2 = time.time()
-
-                    if current_time2 - last_battery_print_time >= 30:
+                    if time.time() - last_battery_print >= 30:
                         self.print_battery_level(api)
-                        last_battery_print_time = current_time2
+                        last_battery_print = time.time()
 
-                    # --- KNOP 1: AUTONOME RONDE ---
+                    # --- KNOP 1: AUTONOME, TRAGE, GEHALVEERDE RONDE ---
                     btn1 = self.joystick.get_button(buttons['1'])
                     if btn1 == 1 and self.previous_button == 0:
                         self.run_autonomous_lap(api)
                     self.previous_button = btn1
 
-                    # --- Overige knoppen (zoals je had) ---
-                    if (self.joystick.get_button(buttons['2']) == 1):
-                        self.speed = 100
-                        self.color = Color(r=255, g=100, b=0)
-                        self.display_number(api)
-
-                    if (self.joystick.get_button(buttons['3']) == 1):
-                        self.speed = 150
-                        self.color = Color(r=255, g=50, b=0)
-                        self.display_number(api)
-
-                    if (self.joystick.get_button(buttons['4']) == 1):
-                        self.speed = 200
-                        self.color = Color(r=255, g=0, b=0)
-                        self.display_number(api)
-
-                    if (self.joystick.get_button(buttons['R2']) == 1):
-                        self.speed = 90
-                        self.color = Color(r=0, g=255, b=255)
-                        self.display_number(api)
-
-                    # --- R1/L1: base_heading draaien (NIET aangepast) ---
-                    if (self.joystick.get_button(buttons['R1']) == 1):
+                    # R1/L1: heading stapjes (niet aangepast)
+                    if self.joystick.get_button(buttons['R1']) == 1:
                         self.base_heading = (self.base_heading + 45) % 360
                         self.move(api, self.base_heading, 0)
                         time.sleep(0.3)
-
-                    if (self.joystick.get_button(buttons['L1']) == 1):
+                    if self.joystick.get_button(buttons['L1']) == 1:
                         self.base_heading = (self.base_heading - 45) % 360
                         self.move(api, self.base_heading, 0)
                         time.sleep(0.3)
 
-                    # --- Manueel rijden met Y (optioneel; laat staan) ---
+                    # (optioneel) manuele Y-rijden — je mag dit weghalen als het stoort
                     Y = self.joystick.get_axis(1)
                     if Y < -0.7:
                         if move_start_time is None:
                             move_start_time = time.time()
-                            self.move(api, self.base_heading, self.speed)
+                            self.move(api, self.base_heading, 60)  # trager
                         else:
-                            self.move(api, self.base_heading, self.speed)
+                            self.move(api, self.base_heading, 60)
                             if time.time() - move_start_time >= 1:
-                                api.set_speed(0)
-                                move_start_time = None
+                                api.set_speed(0); move_start_time = None
                     elif Y > 0.7:
                         self.move(api, (self.base_heading + 180) % 360, 40)
                     else:
-                        api.set_speed(0)
-                        move_start_time = None
-
+                        api.set_speed(0); move_start_time = None
         finally:
             pygame.quit()
 
 def main(toy_name=None, joystickID=0, playerID=1):
-    pygame.init()
-    pygame.joystick.init()
-
-    num_joysticks = pygame.joystick.get_count()
-    if num_joysticks == 0:
-        print("No joysticks found.")
-        return
-
-    joystick = pygame.joystick.Joystick(joystickID)
-    joystick.init()
-
+    pygame.init(); pygame.joystick.init()
+    if pygame.joystick.get_count() == 0:
+        print("No joysticks found."); return
+    joystick = pygame.joystick.Joystick(joystickID); joystick.init()
     sphero_color = Color(255, 0, 0)
-    sphero_controller = SpheroController(joystick, sphero_color, playerID)
-
-    if toy_name is None:
-        sys.exit("No toy name provided")
-
-    sphero_controller.discover_toy(toy_name)
-
-    if sphero_controller.toy:
-        sphero_controller.control_toy()
+    ctl = SpheroController(joystick, sphero_color, playerID)
+    if toy_name is None: sys.exit("No toy name provided")
+    ctl.discover_toy(toy_name)
+    if ctl.toy: ctl.control_toy()
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
         print("Usage: python script.py <toy_name> <joystickNumber 0-1> <player 1-5>")
         sys.exit(1)
-
-    toy_name = sys.argv[1]
-    joystick = int(sys.argv[2])
-    playerid = int(sys.argv[3])
+    toy_name = sys.argv[1]; joystick = int(sys.argv[2]); playerid = int(sys.argv[3])
     print(f"Try to connect to: {toy_name} with number {joystick} for player {playerid}")
-
     main(toy_name, joystick, playerid)
