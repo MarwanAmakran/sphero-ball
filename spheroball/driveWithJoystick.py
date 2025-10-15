@@ -11,10 +11,10 @@ from spherov2.commands.power import Power
 
 # =================== INSTELLINGEN ===================
 TILE_CM = 50.0          # 1 tegel = 50 cm
-RUN_SPEED = 60          # traag (0..255); pas aan naar wens
+RUN_SPEED = 60          # traag (0..255) — verhoog later voor sneller
 SPEED_CM_PER_S = 30.0   # cm/s bij RUN_SPEED op jullie vloer (tunen!)
-SAFETY = 0.95           # iets < 1.0 om overshoot te beperken
-HEADING_SETTLE = 0.30   # pauze na heading-wissel om “wegkruipen” te voorkomen
+SAFETY = 0.95           # iets < 1.0 zodat hij wat korter rijdt (minder overshoot)
+HEADING_SETTLE = 0.30   # wacht na heading-wissel (voorkomt “wegkruipen”)
 DEADZONE = 0.15         # joystick deadzone
 # ====================================================
 
@@ -31,8 +31,8 @@ class SpheroController:
         self.color = color
         self.number = ball_number
 
-        # ——— GEEN AUTO-KALIBRATIE ———
-        self.base_heading = 0          # jouw referentie (alleen via R1/L1!)
+        # GEEN auto-kalibratie of auto-heading
+        self.base_heading = 0          # alleen wijzigen via R1/L1 (optioneel)
         self.previous_button = 0
         self.is_running = True
 
@@ -44,35 +44,54 @@ class SpheroController:
         cm = tiles * TILE_CM
         return (cm / max(1e-6, SPEED_CM_PER_S)) * SAFETY
 
-    def _roll_rel(self, api, rel_heading_deg: int, tiles: float, speed: int = RUN_SPEED):
-        """
-        Rijd 'tiles' tegels op absolute heading = (base_heading + rel_heading_deg) % 360.
-        Geen automatische 0; jij zet base_heading vooraf met R1/L1.
-        Volgorde: stil -> heading -> wachten -> rollen -> stil.
-        """
-        abs_heading = int((self.base_heading + rel_heading_deg) % 360)
+    # 4 tegels vooruit zonder heading te veranderen (géén set_heading!)
+    def _drive_keep_heading(self, api, tiles: float, speed: int = RUN_SPEED):
+        duration = self._tiles_to_seconds(tiles)
+        api.set_speed(0)
+        api.set_speed(speed)       # behoud huidige richting
+        time.sleep(duration)
+        api.set_speed(0)
+        time.sleep(0.15)
+
+    # Rijden met een RELATIEVE draai t.o.v. een referentieheading
+    def _roll_rel(self, api, ref_heading: int, rel_deg: int, tiles: float, speed: int = RUN_SPEED):
+        abs_heading = int((ref_heading + rel_deg) % 360)
         api.set_speed(0)
         api.set_heading(abs_heading)
         time.sleep(HEADING_SETTLE)
-        duration = self._tiles_to_seconds(tiles)
-        api.roll(speed, abs_heading, duration)
+        api.roll(speed, abs_heading, self._tiles_to_seconds(tiles))
         api.set_speed(0)
         time.sleep(0.15)
+
+    # Alleen draaien (geen rijden), rela­tief t.o.v. referentie
+    def _turn_rel(self, api, ref_heading: int, rel_deg: int):
+        abs_heading = int((ref_heading + rel_deg) % 360)
+        api.set_speed(0)
+        api.set_heading(abs_heading)
+        time.sleep(HEADING_SETTLE)
 
     # ---------- TRAJECT ----------
     def run_course(self, api):
         """
-        VOORBEELDTRAJECT:
-        4 tegels rechtdoor -> 90° rechts -> 4 tegels rechtdoor -> stop.
-        Pas dit uit tot je volledige parcours door extra self._roll_rel(...) regels toe te voegen.
+        Doet precies:
+        4 tegels vooruit (zonder heading te zetten) ->
+        90° rechts -> 4 tegels vooruit ->
+        nog eens 90° rechts (alleen draaien) -> stop.
         """
-        print("\n--- AUTONOOM: 4→, 90° rechts, 4→ ---")
+        print("\n--- AUTONOOM: 4→, 90° rechts, 4→, 90° rechts (eindoriëntatie) ---")
         t0 = time.time()
 
-        # 1) 4 tegels vooruit (relatief 0° tov base_heading)
-        self._roll_rel(api, 0, 4.0, RUN_SPEED)
-        # 2) 90° rechts en 4 tegels vooruit
-        self._roll_rel(api, -90, 4.0, RUN_SPEED)
+        # Referentie: neem de huidige heading alleen als LEES-waarde (niet zetten)
+        start_heading = api.get_heading()
+
+        # 1) 4 tegels vooruit — GEEN set_heading gebruikt
+        self._drive_keep_heading(api, 4.0, RUN_SPEED)
+
+        # 2) 90° rechts, dan 4 tegels
+        self._roll_rel(api, start_heading, -90, 4.0, RUN_SPEED)
+
+        # 3) Nogmaals 90° rechts (alleen draaien, niet rijden)
+        self._turn_rel(api, start_heading, -180)  # -90 (stap 2) + -90 (nu) = -180 vanaf start
 
         api.set_speed(0)
         print(f"KLAAR — duur: {time.time()-t0:.2f} s\n")
@@ -101,16 +120,11 @@ class SpheroController:
         try:
             v = Power.get_battery_voltage(self.toy)
             print(f"Battery: {v:.2f} V")
-            if v > 4.1:
-                api.set_front_led(Color(0,255,0))
-            elif v > 3.9:
-                api.set_front_led(Color(255,255,0))
-            elif v > 3.7:
-                api.set_front_led(Color(255,100,0))
-            else:
-                api.set_front_led(Color(255,0,0))
-            if v < 3.5:
-                sys.exit("Battery low — stop.")
+            if v > 4.1:   api.set_front_led(Color(0,255,0))
+            elif v > 3.9: api.set_front_led(Color(255,255,0))
+            elif v > 3.7: api.set_front_led(Color(255,100,0))
+            else:         api.set_front_led(Color(255,0,0))
+            if v < 3.5: sys.exit("Battery low — stop.")
         except Exception:
             pass
 
@@ -119,28 +133,26 @@ class SpheroController:
         with self.connect_toy() as api:
             last_batt = time.time()
 
-            # BELANGRIJK: GEEN auto-kalibratie aan het begin!
-            # (we roepen NIET enter_calibration_mode/exit_calibration_mode aan)
+            # GEEN auto-kalibratie en GEEN set_heading bij start!
 
             while self.is_running:
                 pygame.event.pump()
 
-                # af en toe batterij
                 if time.time() - last_batt >= 30:
                     self.print_battery_level(api)
                     last_batt = time.time()
 
-                # joystick lezen met deadzone (om mini-bewegingen te voorkomen)
+                # joystick lezen met deadzone
                 X = self._dz(self.joystick.get_axis(0))
                 Y = self._dz(self.joystick.get_axis(1))
 
-                # KNOP 1: begin direct met rijden (géén 0 zoeken)
+                # KNOP 1: start meteen het traject (geen 0 zoeken!)
                 btn1 = self.joystick.get_button(buttons['1'])
                 if btn1 == 1 and self.previous_button == 0:
                     self.run_course(api)
                 self.previous_button = btn1
 
-                # R1/L1: jij bepaalt handmatig de base_heading (stappen van 45°)
+                # R1/L1: (optioneel) basishoek veranderen in stappen van 45° (manuele oriëntatie)
                 if self.joystick.get_button(buttons['R1']) == 1:
                     self.base_heading = (self.base_heading + 45) % 360
                     api.set_speed(0); api.set_heading(self.base_heading)
@@ -150,14 +162,14 @@ class SpheroController:
                     api.set_speed(0); api.set_heading(self.base_heading)
                     time.sleep(0.25)
 
-                # (optioneel) handmatig rijden met Y — traag; we laten dit staan
+                # (optioneel) traag manueel rijden met Y
                 if Y < -0.7:
-                    api.set_heading(self.base_heading)
+                    api.set_speed(0); api.set_heading(self.base_heading)
                     api.roll(50, self.base_heading, 0.8)
                     api.set_speed(0)
                 elif Y > 0.7:
                     back = (self.base_heading + 180) % 360
-                    api.set_heading(back)
+                    api.set_speed(0); api.set_heading(back)
                     api.roll(40, back, 0.8)
                     api.set_speed(0)
                 else:
