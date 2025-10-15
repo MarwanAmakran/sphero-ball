@@ -10,20 +10,12 @@ from spherov2.sphero_edu import SpheroEduAPI
 from spherov2.commands.power import Power
 import math
 
-"""
-SB-9DD8 1
-SB-2BBE 2
-SB-27A5 3
-SB-81E0 4
-SB-7740 5
-"""
-
 # ======= TUNEERBARE CONSTANTEN =======
-TILE_CM = 50.0           # 1 tegel = 50 cm
-RUN_SPEED = 150          # 0..255. 150 is stevig maar nog controleerbaar
-SPEED_CM_PER_S = 70.0    # gemeten cm/s bij RUN_SPEED op jullie vloer
+TILE_CM = 50.0           # 1 tegel = 50 cm (referentie)
+RUN_SPEED = 150          # 0..255. 150 is stevig maar controleerbaar
+SPEED_CM_PER_S = 70.0    # >>> meet dit op jullie vloer bij RUN_SPEED
 SAFETY = 0.96            # iets < 1.0 om overshoot te beperken
-HEADING_SETTLE = 0.12    # korte pauze na heading switch
+HEADING_SETTLE = 0.20    # iets langer zodat hij zeker draait
 # =====================================
 
 buttons = {
@@ -62,48 +54,70 @@ class SpheroController:
         self.calibrated = False
 
     # ---------- AUTONOME HELPERS ----------
-    def tiles_to_seconds(self, tiles: float) -> float:
-        cm = tiles * TILE_CM
+    def meters_to_seconds(self, meters: float) -> float:
+        cm = meters * 100.0
         return (cm / max(1e-6, SPEED_CM_PER_S)) * SAFETY
 
-    def roll_forward_rel(self, api, rel_heading_deg: int, tiles: float, speed: int = RUN_SPEED):
-        """Rijd rechtuit over 'tiles' tegels volgens een heading
-        die RELATIEF is tov je huidige base_heading (die jij instelt met R1/L1)."""
+    def roll_forward_rel(self, api, rel_heading_deg: int, meters: float, speed: int = RUN_SPEED):
+        """Rijd rechtuit over 'meters' volgens RELatieve heading tov base_heading (R1/L1)."""
         abs_heading = int((self.base_heading + rel_heading_deg) % 360)
         api.set_heading(abs_heading)
         time.sleep(HEADING_SETTLE)
-        duration = self.tiles_to_seconds(tiles)
+        duration = self.meters_to_seconds(meters)
         api.roll(speed, abs_heading, duration)
         api.set_speed(0)
-        time.sleep(0.08)  # kort stabiliseren
+        time.sleep(0.10)  # kort stabiliseren
 
     def build_segments(self):
-        """Traject in WIJZERSZIN (relatieve headings tov base_heading).
-        Start net achter de zwart-witte lijn; 0° moet naar het eerste rechte stuk wijzen."""
-        return [
-            # label, rel_heading, tiles
-            ("→",   0,   3.0),   # start rechtdoor ~3 tegels
-            ("↘", 315,  0.6),
-            ("→",   0,   1.8),
-            ("↘", 315,  0.7),
-            ("↓", 270,  4.0),
-            ("↙", 225,  0.6),
-            ("←", 180,  2.2),
-            ("↖", 135,  0.7),
-            ("↑",  90,  2.9),
-            ("↗",  45,  0.6),
-            ("→",   0,   1.1),   # passeert start/finish
-        ]
+        """
+        JOUW TRAJECT (wijzerszin), RELATIEF tov base_heading:
+        2,8 m vooruit → rechts 2,5 → rechts 1,0 → links 2,3 → links 1,3 → rechts 2,5 → rechts 3,0 → stop
+        Rechts = -90°, Links = +90° (relatief).
+        """
+        seg = []
+        heading = 0  # start vooruit
+
+        # helper om segment toe te voegen en heading te wijzigen
+        def fwd(distance_m):
+            seg.append(("→", heading, distance_m))
+        def right():
+            nonlocal heading
+            heading = (heading - 90) % 360
+        def left():
+            nonlocal heading
+            heading = (heading + 90) % 360
+
+        # 1) 2,8 m vooruit
+        fwd(2.8)
+        # 2) rechts + 2,5 m
+        right(); fwd(2.5)
+        # 3) rechts + 1,0 m
+        right(); fwd(1.0)
+        # 4) links + 2,3 m
+        left();  fwd(2.3)
+        # 5) links + 1,3 m
+        left();  fwd(1.3)
+        # 6) rechts + 2,5 m
+        right(); fwd(2.5)
+        # 7) rechts + 3,0 m
+        right(); fwd(3.0)
+        # 8) klaar
+        return seg
 
     def run_autonomous_lap(self, api):
-        """Rijdt 1 volledige ronde; blokkeert tot klaar."""
+        """Rijdt 1 volledige ronde volgens build_segments()."""
         print("\n--- AUTONOME RONDE START ---")
+        # fixeer startheading zodat joystick-updates geen invloed hebben
+        start_base = self.base_heading
         segments = self.build_segments()
         t0 = time.time()
-        for lbl, rel_h, tiles in segments:
-            print(f"{lbl}  heading_rel={rel_h:3d}°, afstand≈{tiles:.2f} tegels")
-            self.roll_forward_rel(api, rel_h, tiles, RUN_SPEED)
+        for lbl, rel_h, meters in segments:
+            abs_h = (start_base + rel_h) % 360
+            print(f"{lbl}  heading_abs={abs_h:3.0f}°, afstand={meters:.2f} m")
+            api.set_front_led(Color(0, 255, 255))
+            self.roll_forward_rel(api, rel_h, meters, RUN_SPEED)
         api.set_speed(0)
+        api.set_front_led(Color(0, 120, 255))
         lap = time.time() - t0
         print(f"FINISH — rondetijd: {lap:.2f} s\n")
 
@@ -216,42 +230,18 @@ class SpheroController:
                     if not self.gameOn:
                         self.gameStartTime = time.time()
                     current_time2 = time.time()
-                    gameTime = current_time2 - self.gameStartTime
 
                     if current_time2 - last_battery_print_time >= 30:
                         self.print_battery_level(api)
                         last_battery_print_time = current_time2
 
-                    # (optioneel) IMU check
-                    if self.gameOn:
-                        try:
-                            acceleration_data = api.get_acceleration()
-                            if acceleration_data is not None:
-                                x_acc = acceleration_data['x']
-                                z_acc = acceleration_data['z']
-                                angle = math.degrees(math.atan2(x_acc, z_acc))
-
-                                if abs(angle) >= 30:
-                                    hillCounter += 1
-                                    if hillCounter > 10:
-                                        seconds = (current_time2 - self.gameStartTime)
-                                        print(f"Player {self.number} going wild")
-                                else:
-                                    hillCounter = 0
-                        except Exception:
-                            pass
-
-                    X = self.joystick.get_axis(0)
-                    Y = self.joystick.get_axis(1)
-
-                    # ======= KNOP 1: AUTONOME RONDE =======
+                    # --- KNOP 1: AUTONOME RONDE ---
                     btn1 = self.joystick.get_button(buttons['1'])
                     if btn1 == 1 and self.previous_button == 0:
-                        # rising edge -> start volledige ronde
                         self.run_autonomous_lap(api)
                     self.previous_button = btn1
 
-                    # ======= Overige knoppen (zoals je had) =======
+                    # --- Overige knoppen (zoals je had) ---
                     if (self.joystick.get_button(buttons['2']) == 1):
                         self.speed = 100
                         self.color = Color(r=255, g=100, b=0)
@@ -283,7 +273,8 @@ class SpheroController:
                         self.move(api, self.base_heading, 0)
                         time.sleep(0.3)
 
-                    # --- Manueel rijden met Y (optioneel laten staan) ---
+                    # --- Manueel rijden met Y (optioneel; laat staan) ---
+                    Y = self.joystick.get_axis(1)
                     if Y < -0.7:
                         if move_start_time is None:
                             move_start_time = time.time()
@@ -298,8 +289,6 @@ class SpheroController:
                     else:
                         api.set_speed(0)
                         move_start_time = None
-
-                    self.base_heading = api.get_heading()
 
         finally:
             pygame.quit()
