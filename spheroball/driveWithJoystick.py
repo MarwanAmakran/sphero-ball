@@ -13,8 +13,8 @@ from spherov2.commands.power import Power
 TILE_CM = 50.0          # 1 tegel = 50 cm
 RUN_SPEED = 60          # traag (0..255) — verhoog later voor sneller
 SPEED_CM_PER_S = 30.0   # cm/s bij RUN_SPEED op jullie vloer (tunen!)
-SAFETY = 0.95           # iets < 1.0 zodat hij wat korter rijdt (minder overshoot)
-HEADING_SETTLE = 0.30   # wacht na heading-wissel (voorkomt “wegkruipen”)
+SAFETY = 0.95           # iets < 1.0 zodat hij wat korter rijdt
+HEADING_SETTLE = 0.30   # wacht na heading-wissel
 DEADZONE = 0.15         # joystick deadzone
 # ====================================================
 
@@ -73,12 +73,11 @@ class SpheroController:
     # ---------- TRAJECT ----------
     def run_course(self, api):
         """
-        Doet precies:
         4 tegels vooruit (zonder heading te zetten) ->
-        90° rechts -> 4 tegels vooruit ->
-        nog eens 90° rechts (alleen draaien) -> stop.
+        90° LINKS -> 4 tegels vooruit ->
+        nog eens 90° LINKS (alleen draaien) -> stop.
         """
-        print("\n--- AUTONOOM: 4→, 90° rechts, 4→, 90° rechts (eindoriëntatie) ---")
+        print("\n--- AUTONOOM: 4→, 90° links, 4→, 90° links (eindoriëntatie) ---")
         t0 = time.time()
 
         # Referentie: neem de huidige heading alleen als LEES-waarde (niet zetten)
@@ -87,11 +86,11 @@ class SpheroController:
         # 1) 4 tegels vooruit — GEEN set_heading gebruikt
         self._drive_keep_heading(api, 4.0, RUN_SPEED)
 
-        # 2) 90° rechts, dan 4 tegels
-        self._roll_rel(api, start_heading, -90, 4.0, RUN_SPEED)
+        # 2) 90° LINKS (+90) en 4 tegels vooruit   <<< was -90 (rechts)
+        self._roll_rel(api, start_heading, +90, 4.0, RUN_SPEED)
 
-        # 3) Nogmaals 90° rechts (alleen draaien, niet rijden)
-        self._turn_rel(api, start_heading, -180)  # -90 (stap 2) + -90 (nu) = -180 vanaf start
+        # 3) Nogmaals 90° LINKS (alleen draaien)   <<< eindoriëntatie links
+        self._turn_rel(api, start_heading, +180)  # +90 (stap 2) + +90 (nu) = +180 vanaf start
 
         api.set_speed(0)
         print(f"KLAAR — duur: {time.time()-t0:.2f} s\n")
@@ -146,13 +145,13 @@ class SpheroController:
                 X = self._dz(self.joystick.get_axis(0))
                 Y = self._dz(self.joystick.get_axis(1))
 
-                # KNOP 1: start meteen het traject (geen 0 zoeken!)
+                # KNOP 1: start traject
                 btn1 = self.joystick.get_button(buttons['1'])
                 if btn1 == 1 and self.previous_button == 0:
                     self.run_course(api)
                 self.previous_button = btn1
 
-                # R1/L1: (optioneel) basishoek veranderen in stappen van 45° (manuele oriëntatie)
+                # R1/L1: (optioneel) basishoek veranderen in stappen van 45°
                 if self.joystick.get_button(buttons['R1']) == 1:
                     self.base_heading = (self.base_heading + 45) % 360
                     api.set_speed(0); api.set_heading(self.base_heading)
@@ -202,3 +201,4 @@ if __name__ == "__main__":
     playerid = int(sys.argv[3])
     print(f"Try to connect to: {toy_name} with number {joystick} for player {playerid}")
     main(toy_name, joystick, playerid)
+
