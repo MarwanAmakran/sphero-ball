@@ -18,7 +18,7 @@ HEADING_SETTLE = 0.30   # wacht na heading-wissel
 DEADZONE = 0.15         # joystick deadzone
 
 # Kies bochtrichting: -90 = RECHTS, +90 = LINKS
-TURN_DEG = -90
+TURN_DEG = 90
 # ====================================================
 
 buttons = {
