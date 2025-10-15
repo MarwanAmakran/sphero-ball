@@ -17,7 +17,7 @@ SB-7740 5
 
 # ======= TUNEERBARE CONSTANTEN =======
 TILE_CM = 50.0           # 1 tegel = 50 cm
-RUN_SPEED = 90           # Sphero speed (0..255) -> houd dit laag voor controle
+RUN_SPEED = 50           # Sphero speed (0..255) -> houd dit laag voor controle
 SPEED_CM_PER_S = 41.7    # JOUW opgegeven snelheid (geïnterpreteerd als cm/s)
 SAFETY = 0.96            # iets < 1.0 om overshoot te beperken
 HEADING_SETTLE = 0.20    # korte pauze na heading switch
