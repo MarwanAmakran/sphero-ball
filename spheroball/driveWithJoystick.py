@@ -94,12 +94,12 @@ class SpheroController:
             self._drive_keep_heading(api, 4.0, RUN_SPEED)
 
             # 2) eerste 90° bocht relative tov start
-            h1 = (start_heading + TURN_DEG) % 360
+            h1 = (start_heading + TURN_DEG) 
             # 3) 4 tegels vooruit op die nieuwe heading
             self._roll_abs(api, h1, 4.0, RUN_SPEED)
 
             # 4) tweede 90° bocht in dezelfde richting
-            h2 = (h1 + TURN_DEG) % 360
+            h2 = (h1 + TURN_DEG) 
             self._turn_abs(api, h2)  # alleen draaien, niet rijden
 
             api.set_speed(0)
