@@ -11,10 +11,10 @@ from spherov2.commands.power import Power
 import math
 
 # ======= TUNEERBARE CONSTANTEN =======
-RUN_SPEED = 70           # TRAGE snelheid (0..255)
-SPEED_CM_PER_S = 35.0    # schatting cm/s bij RUN_SPEED op jullie vloer
-SAFETY = 0.95            # iets korter rijden om overshoot te beperken
-HEADING_SETTLE = 0.25    # iets langer wachten na het draaien
+RUN_SPEED = 30          # TRAGE snelheid (0..255)
+SPEED_CM_PER_S = 20.0    # schatting cm/s bij RUN_SPEED op jullie vloer
+SAFETY = 0.40            # iets korter rijden om overshoot te beperken
+HEADING_SETTLE = 0.10    # iets langer wachten na het draaien
 SCALE = 0.5              # *** ALLE AFSTANDEN GEDEELD DOOR 2 ***
 # =====================================
 
