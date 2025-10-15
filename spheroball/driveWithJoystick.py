@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import pygame
 import time
 import sys
@@ -15,13 +18,13 @@ SB-81E0 4
 SB-7740 5
 '''
 
-# ======= TUNEERBARE CONSTANTEN =======
-TILE_CM = 50.0           # 1 tegel = 50 cm
-RUN_SPEED = 50           # Sphero speed (0..255) -> houd dit laag voor controle
-SPEED_CM_PER_S = 41.7    # JOUW opgegeven snelheid (geïnterpreteerd als cm/s)
-SAFETY = 0.96            # iets < 1.0 om overshoot te beperken
-HEADING_SETTLE = 0.20    # korte pauze na heading switch
-# =====================================
+# ======= TUNEERBARE CONSTANTEN (TRAAG + GEEN AUTO-0) =======
+TILE_CM = 50.0          # 1 tegel = 50 cm
+RUN_SPEED = 60          # traag (0..255)
+SPEED_CM_PER_S = 30.0   # schatting cm/s bij RUN_SPEED (pas aan op basis van test)
+SAFETY = 0.95           # iets korter rijden om overshoot te beperken
+HEADING_SETTLE = 0.30   # rustpauze na heading wissel, voorkomt wegkruipen
+# ===========================================================
 
 buttons = {
     '1': 0,
@@ -41,7 +44,7 @@ class SpheroController:
         self.toy = None
         self.speed = 50
         self.heading = 0
-        self.base_heading = 0
+        self.base_heading = 0                 # jouw referentiehoek (handmatig via R1/L1)
         self.is_running = True
         self.calibration_mode = False
         self.joystick = joystick
@@ -51,69 +54,48 @@ class SpheroController:
         self.threshold_accel_mag = 0.05
         self.collision_occurred = False
         self.color = color
-        self.previous_button = 0   # <-- zet op 0 zodat 'rising edge' werkt
+        self.previous_button = 0              # belangrijk voor 'rising edge'
         self.number = ball_number
         self.gameStartTime = time.time()
         self.gameOn = False
         self.boosterCounter = 0
         self.calibrated = False
 
-    # ---------- AUTONOME HELPERS ----------
-    def tiles_to_seconds(self, tiles: float) -> float:
-        """Zet tegels (50 cm) om naar secondes o.b.v. SPEED_CM_PER_S en SAFETY."""
+    # ---------- HELPER: joystick deadzone ----------
+    def _dz(self, v, dz=0.15):
+        return 0 if abs(v) < dz else v
+
+    # ---------- AUTONOME HELPERS (geen auto-0) ----------
+    def _tiles_to_seconds(self, tiles: float) -> float:
         cm = tiles * TILE_CM
         return (cm / max(1e-6, SPEED_CM_PER_S)) * SAFETY
 
-    def roll_forward_rel(self, api, rel_heading_deg: int, tiles: float, speed: int = RUN_SPEED):
-        """Rijd 'tiles' tegels met heading RELATIEF tov base_heading (R1/L1 zet jij vooraf)."""
+    def _roll_rel(self, api, rel_heading_deg: int, tiles: float, speed: int = RUN_SPEED):
+        """
+        Rijd 'tiles' tegels op absolute heading = (base_heading + rel_heading_deg) % 360.
+        Geen automatische 0; jij zet base_heading zelf met R1/L1 voor de start.
+        """
         abs_heading = int((self.base_heading + rel_heading_deg) % 360)
+        api.set_speed(0)                      # zeker stil voor headingwissel
         api.set_heading(abs_heading)
         time.sleep(HEADING_SETTLE)
-        duration = self.tiles_to_seconds(tiles)
+        duration = self._tiles_to_seconds(tiles)
         api.roll(speed, abs_heading, duration)
         api.set_speed(0)
-        time.sleep(0.10)  # kort stabiliseren
+        time.sleep(0.15)                      # kort stabiliseren
 
-    def build_segments(self):
-        """
-        TRAJECT (tegels, wijzerszin):
-        4 → R → 4 → R → 2 → L → 3.5 → L → 2 → L → 2 → L → 4 → stop
-        R = -90°, L = +90° (relatief t.o.v. startheading).
-        """
-        seg = []
-        heading = 0  # start rechtdoor
-
-        def fwd(t): seg.append(("→", heading, t))
-        def right():
-            nonlocal heading
-            heading = (heading - 90) % 360
-        def left():
-            nonlocal heading
-            heading = (heading + 90) % 360
-
-        fwd(4.0)       # 1
-        right(); fwd(4.0)   # 2
-        right(); fwd(2.0)   # 3
-        left();  fwd(3.5)   # 4
-        left();  fwd(2.0)   # 5
-        left();  fwd(2.0)   # 6
-        left();  fwd(4.0)   # 7 (finish)
-        return seg
-
-    def run_autonomous_lap(self, api):
-        """Rijdt 1 volledige ronde volgens build_segments(); print rondetijd."""
-        print("\n--- AUTONOME RONDE START ---")
-        start_base = self.base_heading  # 'lock' jouw uitlijning op start
+    def run_first_L_shape(self, api):
+        """4 tegels vooruit, 90° rechts, 4 tegels vooruit, stop (traag)."""
+        print("\n--- AUTONOOM: 4→, 90° rechts, 4→ ---")
         t0 = time.time()
-        for lbl, rel_h, tiles in self.build_segments():
-            abs_h = (start_base + rel_h) % 360
-            print(f"{lbl}  heading_abs={abs_h:3.0f}°, afstand≈{tiles:.2f} tegels")
-            self.roll_forward_rel(api, rel_h, tiles, RUN_SPEED)
+        # 1) 4 tegels vooruit
+        self._roll_rel(api, 0, 4.0, RUN_SPEED)
+        # 2) 90° rechts en 4 tegels
+        self._roll_rel(api, -90, 4.0, RUN_SPEED)
         api.set_speed(0)
-        lap = time.time() - t0
-        print(f"FINISH — rondetijd: {lap:.2f} s\n")
+        print(f"KLAAR — duur: {time.time()-t0:.2f} s\n")
 
-    # ---------- JOUW ORIGINELE FUNCTIES ----------
+    # ---------- BATTERIJ/CONNECT ----------
     def discover_nearest_toy(self):
         try:
             toys = scanner.find_toys()
@@ -147,6 +129,7 @@ class SpheroController:
         api.set_heading(heading)
         api.set_speed(speed)
 
+    # ---------- (optioneel) oude kalibratie-functies laten staan, maar NIET gebruiken ----------
     def toggle_calibration_mode(self, api, Y):
         if not self.calibration_mode:
             self.enter_calibration_mode(api, Y)
@@ -159,16 +142,13 @@ class SpheroController:
         self.calibration_mode = True
         self.gameOn = False
         api.set_front_led(Color(255, 0, 0))
-
         self.base_heading = api.get_heading()
-
         if X < -0.7:
             new_heading = self.base_heading - 5
         elif X > 0.7:
             new_heading = self.base_heading + 5
         else:
             new_heading = self.base_heading
-
         api.set_heading(new_heading)
 
     def exit_calibration_mode(self, api):
@@ -179,7 +159,7 @@ class SpheroController:
         self.gameStartTime = time.time()
         api.set_front_led(Color(0, 255, 0))
 
-    LED_PATTERNS = {1: '1', 2: '2', 3: '3', 4: '4', 5: '5'}
+    LED_PATTERNS = {1:'1',2:'2',3:'3',4:'4',5:'5'}
 
     def set_number(self, number):
         self.number = int(number)
@@ -205,74 +185,57 @@ class SpheroController:
         if battery_voltage < 3.5:
             sys.exit("Battery low — stop.")
 
+    # ---------- MAIN LOOP ----------
     def control_toy(self):
         try:
             with self.connect_toy() as api:
                 last_battery_print_time = time.time()
                 self.set_number(self.number)
                 self.display_number(api)
-                self.enter_calibration_mode(api, 0)
-                self.exit_calibration_mode(api)
+
+                # BELANGRIJK: GEEN automatische 0/kalibratie hier!
+                # self.enter_calibration_mode(api, 0)
+                # self.exit_calibration_mode(api)
 
                 move_start_time = None
 
                 while self.is_running:
                     pygame.event.pump()
-                    current_time2 = time.time()
 
-                    if current_time2 - last_battery_print_time >= 30:
+                    # Batterij status af en toe
+                    if time.time() - last_battery_print_time >= 30:
                         self.print_battery_level(api)
-                        last_battery_print_time = current_time2
+                        last_battery_print_time = time.time()
 
-                    X = self.joystick.get_axis(0)
-                    Y = self.joystick.get_axis(1)
+                    # Lees joystick (met deadzone)
+                    X = self._dz(self.joystick.get_axis(0))
+                    Y = self._dz(self.joystick.get_axis(1))
 
-                    # --- KNOP 1: AUTONOME RONDE ---
+                    # --- KNOP 1: AUTONOME L-VORM (4→, rechts, 4→) ---
                     btn1 = self.joystick.get_button(buttons['1'])
                     if btn1 == 1 and self.previous_button == 0:
-                        self.run_autonomous_lap(api)   # <-- START AUTONOOM
+                        self.run_first_L_shape(api)
                     self.previous_button = btn1
 
-                    # --- Overige knoppen (optioneel) ---
-                    if (self.joystick.get_button(buttons['2']) == 1):
-                        self.speed = 100
-                        self.color = Color(r=255, g=100, b=0)
-                        self.display_number(api)
-
-                    if (self.joystick.get_button(buttons['3']) == 1):
-                        self.speed = 150
-                        self.color = Color(r=255, g=50, b=0)
-                        self.display_number(api)
-
-                    if (self.joystick.get_button(buttons['4']) == 1):
-                        self.speed = 200
-                        self.color = Color(r=255, g=0, b=0)
-                        self.display_number(api)
-
-                    if (self.joystick.get_button(buttons['R2']) == 1):
-                        self.speed = 90
-                        self.color = Color(r=0, g=255, b=255)
-                        self.display_number(api)
-
-                    # --- R1/L1: base_heading draaien (NIET aangepast) ---
+                    # --- R1/L1: base_heading draaien in stappen van 45° (jij richt zelf) ---
                     if (self.joystick.get_button(buttons['R1']) == 1):
                         self.base_heading = (self.base_heading + 45) % 360
                         self.move(api, self.base_heading, 0)
-                        time.sleep(0.3)
+                        time.sleep(0.25)
 
                     if (self.joystick.get_button(buttons['L1']) == 1):
                         self.base_heading = (self.base_heading - 45) % 360
                         self.move(api, self.base_heading, 0)
-                        time.sleep(0.3)
+                        time.sleep(0.25)
 
-                    # --- Manueel rijden met Y (optioneel) ---
+                    # --- Optioneel: handmatig vooruit/achteruit met Y (traag) ---
                     if Y < -0.7:
                         if move_start_time is None:
                             move_start_time = time.time()
-                            self.move(api, self.base_heading, self.speed)
+                            self.move(api, self.base_heading, 50)  # traag
                         else:
-                            self.move(api, self.base_heading, self.speed)
-                            if time.time() - move_start_time >= 1:
+                            self.move(api, self.base_heading, 50)
+                            if time.time() - move_start_time >= 1.0:
                                 api.set_speed(0)
                                 move_start_time = None
                     elif Y > 0.7:
@@ -281,7 +244,9 @@ class SpheroController:
                         api.set_speed(0)
                         move_start_time = None
 
-                    self.base_heading = api.get_heading()
+                    # BELANGRIJK: GEEN automatische self.base_heading = api.get_heading()
+                    # (anders 'kruipt' je 0-punt en draait hij een paar graden bij de start)
+
         finally:
             pygame.quit()
 
