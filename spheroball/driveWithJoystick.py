@@ -17,7 +17,7 @@ SAFETY = 0.95           # iets < 1.0 zodat hij wat korter rijdt
 HEADING_SETTLE = 0.30   # wacht na heading-wissel
 DEADZONE = 0.15         # joystick deadzone
 
-# Kies bochtrichting: -90 = RECHTS, +90 = LINKS
+# Kies bochtrichting: 90 = RECHTS, -90 = LINKS
 TURN_DEG = 90
 # ====================================================
 
@@ -72,41 +72,60 @@ class SpheroController:
         time.sleep(HEADING_SETTLE)
 
     # ---------- TRAJECT ----------
-    def run_course(self, api):
-        """
-        Exact:
-        4 tegels vooruit (géén heading set) ->
-        90° bocht (TURN_DEG) ->
-        4 tegels vooruit ->
-        opnieuw 90° bocht (zelfde richting) -> stop.
+  def run_course(self, api):
+    """
+    Volg exact dit parcours (in tegels):
+    4.5→, R90, 4→, R90, 2→, R90, 2→, L90, 4→, L90, 2→,
+    R90, 2→, R90, 4→, R90, 4→, STOP
+    """
+    self.auto_running = True
+    try:
+        print("\n--- AUTONOOM PARCOURS ---")
+        t0 = time.time()
 
-        Tijdens deze functie is joystick volledig genegeerd.
-        """
-        self.auto_running = True
-        try:
-            print("\n--- AUTONOOM: 4→, 90°, 4→, 90° ---")
-            t0 = time.time()
+        # Startheading alleen LEZEN, niet zetten
+        h = api.get_heading()
 
-            # Referentie: lees alleen (niet zetten), zo blijft start perfect rechtdoor
-            start_heading = api.get_heading()
+        # 1) 4.5 tegels vooruit — GEEN set_heading (dus geen draai bij start)
+        self._drive_keep_heading(api, 4.5, RUN_SPEED)
 
-            # 1) 4 tegels vooruit — NIET set_heading: dus geen “0 zoeken”
-            self._drive_keep_heading(api, 4.0, RUN_SPEED)
+        # 2) R90, 4→
+        h = (h + 90) 
+        self._roll_abs(api, h, 4.0, RUN_SPEED)
 
-            # 2) eerste 90° bocht relative tov start
-            h1 = (start_heading + TURN_DEG) 
-            # 3) 4 tegels vooruit op die nieuwe heading
-            self._roll_abs(api, h1, 4.0, RUN_SPEED)
+        # 3) R90, 2→
+        h = (h + 90) 
+        self._roll_abs(api, h, 2.0, RUN_SPEED)
 
-            # 4) tweede 90° bocht in dezelfde richting
-            h2 = (h1 + TURN_DEG) 
-            self._turn_abs(api, h2)  # alleen draaien, niet rijden
+        # 4) R90, 2→
+        h = (h + 90) 
+        self._roll_abs(api, h, 2.0, RUN_SPEED)
 
-            api.set_speed(0)
-            print(f"KLAAR — duur: {time.time()-t0:.2f} s\n")
-        finally:
-            # na auto-run joystick weer vrijgeven
-            self.auto_running = False
+        # 5) L90, 4→
+        h = (h - 90) 
+        self._roll_abs(api, h, 4.0, RUN_SPEED)
+
+        # 6) L90, 2→
+        h = (h - 90) 
+        self._roll_abs(api, h, 2.0, RUN_SPEED)
+
+        # 7) R90, 2→
+        h = (h + 90) 
+        self._roll_abs(api, h, 2.0, RUN_SPEED)
+
+        # 8) R90, 4→
+        h = (h + 90)
+        self._roll_abs(api, h, 4.0, RUN_SPEED)
+
+        # 9) R90, 4→
+        h = (h + 90) 
+        self._roll_abs(api, h, 4.0, RUN_SPEED)
+
+        api.set_speed(0)
+        print(f"KLAAR — duur: {time.time()-t0:.2f} s\n")
+    finally:
+        self.auto_running = False
+
 
     # ---------- VERBINDEN/BATTERIJ ----------
     def discover_toy(self, toy_name):
